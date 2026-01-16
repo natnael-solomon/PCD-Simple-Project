@@ -1,8 +1,5 @@
-# Parsing Visualizer
 
-A GUI tool to visualize two parsing techniques step-by-step:
-- **Backtracking Parser** (top-down)
-- **Operator Precedence Parser** (bottom-up)
+ # Backtracking Parser and Operator Precedence Parser
 
 ## Run
 
@@ -32,6 +29,7 @@ Example:
 S -> a A b
 A -> c | d
 ```
+
 
 
 
