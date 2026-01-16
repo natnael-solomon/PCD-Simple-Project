@@ -33,8 +33,5 @@ S -> a A b
 A -> c | d
 ```
 
-## Tests
 
-```
-python tests/test_all.py
-```
+
