@@ -10,7 +10,6 @@ class OperatorPrecedenceParser:
     
     def build_table(self):
         self.check_grammar()
-        
         leading = self.compute_leading()
         trailing = self.compute_trailing()
         
@@ -123,7 +122,6 @@ class OperatorPrecedenceParser:
     
     def parse(self, input_text):
         self.build_table()
-        
         self.steps = []
         self.step_num = 0
         
@@ -133,16 +131,25 @@ class OperatorPrecedenceParser:
             tokens = self.tokenize(input_text)
         
         tokens.append("$")
-        
         stack = ["$"]
         pos = 0
         
         self.add_step("shift", f"Start: stack={stack}, input={tokens}")
         
         while True:
+            if len(stack) == 2 and stack[0] == "$" and stack[1] == self.grammar.start_symbol:
+                if pos >= len(tokens) - 1:
+                    self.add_step("accept", "Input accepted!")
+                    return self.steps
+            
             top = self.get_top_terminal(stack)
             current = tokens[pos] if pos < len(tokens) else "$"
             rel = self.get_relation(top, current)
+            
+            if rel is None and len(stack) == 2 and stack[0] == "$" and stack[1] in self.grammar.non_terminals:
+                if pos >= len(tokens) - 1:
+                    if self.try_unit_reductions(stack):
+                        continue
             
             if rel is None:
                 self.add_step("reject", f"No relation between '{top}' and '{current}'")
@@ -154,10 +161,17 @@ class OperatorPrecedenceParser:
                 pos += 1
             
             elif rel == ">":
-                handle, prod = self.find_handle(stack)
+                handle_start = self.find_handle_start(stack)
+                
+                if handle_start is None:
+                    self.add_step("reject", "Cannot find handle start (no '<' found)")
+                    return self.steps
+                
+                handle = stack[handle_start:]
+                prod = self.find_matching_production(handle)
                 
                 if prod is None:
-                    self.add_step("reject", "Cannot find handle to reduce")
+                    self.add_step("reject", f"No production matches handle: {handle}")
                     return self.steps
                 
                 for _ in range(len(handle)):
@@ -166,16 +180,20 @@ class OperatorPrecedenceParser:
                 
                 self.add_step("reduce", f"Reduce {' '.join(handle)} -> {prod.left}, stack={stack}")
             
-            if len(stack) == 2 and stack[0] == "$" and stack[1] == self.grammar.start_symbol:
-                if pos >= len(tokens) - 1:
-                    self.add_step("accept", "Input accepted!")
-                    return self.steps
-            
             if self.step_num > 500:
                 self.add_step("reject", "Too many steps - possible infinite loop")
                 return self.steps
         
         return self.steps
+    
+    def try_unit_reductions(self, stack):
+        current = stack[1]
+        for prod in self.grammar.productions:
+            if len(prod.right) == 1 and prod.right[0] == current:
+                stack[1] = prod.left
+                self.add_step("reduce", f"Reduce {current} -> {prod.left} (unit), stack={stack}")
+                return True
+        return False
     
     def get_top_terminal(self, stack):
         for i in range(len(stack) - 1, -1, -1):
@@ -183,18 +201,31 @@ class OperatorPrecedenceParser:
                 return stack[i]
         return "$"
     
-    def find_handle(self, stack):
-        for prod in self.grammar.productions:
-            length = len(prod.right)
-            if length == 0:
-                continue
-            
-            for start in range(max(1, len(stack) - length - 1), len(stack)):
-                segment = stack[start:]
-                if self.matches(segment, prod):
-                    return segment, prod
+    def find_handle_start(self, stack):
+        top_term_pos = None
+        for i in range(len(stack) - 1, -1, -1):
+            if stack[i] in self.grammar.terminals or stack[i] == "$":
+                top_term_pos = i
+                break
         
-        return None, None
+        if top_term_pos is None:
+            return None
+        
+        prev_term_pos = top_term_pos
+        for i in range(top_term_pos - 1, -1, -1):
+            if stack[i] in self.grammar.terminals or stack[i] == "$":
+                rel = self.get_relation(stack[i], stack[prev_term_pos])
+                if rel == "<":
+                    return i + 1
+                prev_term_pos = i
+        
+        return 1
+    
+    def find_matching_production(self, handle):
+        for prod in self.grammar.productions:
+            if self.matches(handle, prod):
+                return prod
+        return None
     
     def matches(self, segment, prod):
         if len(segment) != len(prod.right):
@@ -216,7 +247,6 @@ class OperatorPrecedenceParser:
     def tokenize(self, text):
         tokens = []
         pos = 0
-        
         terminals = sorted(self.grammar.terminals, key=len, reverse=True)
         
         while pos < len(text):
