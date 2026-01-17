@@ -4,7 +4,7 @@
 ## Run
 
 ```
-python main.py
+python gui.py
 ```
 
 Requires Python 3 with Tkinter (included with most Python installations).
@@ -29,6 +29,7 @@ Example:
 S -> a A b
 A -> c | d
 ```
+
 
 
 
