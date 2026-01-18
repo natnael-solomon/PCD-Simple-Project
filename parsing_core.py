@@ -11,7 +11,6 @@ class Production:
 
 
 class TreeNode:
-    """Node for parse tree visualization"""
     def __init__(self, symbol, children=None):
         self.symbol = symbol
         self.children = children if children is not None else []

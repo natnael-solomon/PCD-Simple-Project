@@ -126,7 +126,6 @@ class OperatorPrecedenceParser:
         
         parsing_stack.append(current_input)
         
-        # Get remaining input
         remaining_input = input_tokens[input_position + 1:]
         
         step_message = "Shift '" + current_input + "' (" + top_terminal + " " + precedence_relation + " " + current_input + "), stack=" + str(parsing_stack) + ", input=" + str(remaining_input)
@@ -160,7 +159,6 @@ class OperatorPrecedenceParser:
         
         parsing_stack.append(matching_production.left_side)
         
-        # Get remaining input
         remaining_input = input_tokens[input_position:]
         
         handle_string = " ".join(handle_symbols)
@@ -170,7 +168,6 @@ class OperatorPrecedenceParser:
     def try_unit_reduction(self, parsing_stack, input_tokens, input_position):
         current_symbol = parsing_stack[1]
         
-        # Get remaining input
         remaining_input = input_tokens[input_position:]
         
         for production in self.grammar.production_list:
@@ -183,7 +180,6 @@ class OperatorPrecedenceParser:
         return False
     
     def _find_terminal_in_stack(self, parsing_stack, start_index=None):
-        """Helper to find terminal symbol in stack from given position"""
         if start_index is None:
             start_index = len(parsing_stack) - 1
         

@@ -103,13 +103,6 @@ def add_direct_leading_terminals(grammar, leading_sets):
 
 
 def _propagate_sets(grammar, sets_dict, get_symbol_func):
-    """Generic propagation function for leading/trailing sets
-    
-    Args:
-        grammar: The grammar object
-        sets_dict: Dictionary of sets to propagate
-        get_symbol_func: Function that takes production.right_side and returns the symbol to check
-    """
     something_changed = True
     while something_changed:
         something_changed = False
