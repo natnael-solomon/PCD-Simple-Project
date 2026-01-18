@@ -1,4 +1,4 @@
-from parsing_core import create_parsing_step, add_parsing_step_to_list, tokenize_input_string, is_terminal_symbol, is_nonterminal_symbol
+from parsing_core import create_parsing_step, add_parsing_step_to_list, tokenize_input_string, is_terminal_symbol, is_nonterminal_symbol, TreeNode
 
 
 class BacktrackingParser:
@@ -11,6 +11,7 @@ class BacktrackingParser:
         self.maximum_depth = 50
         self.is_too_deep = False
         self.call_stack = []
+        self.parse_tree = None  # Root of the parse tree
     
     def parse_input(self, input_string):
         self.input_tokens = tokenize_input_string(input_string)
@@ -18,15 +19,24 @@ class BacktrackingParser:
         self.step_counter = 0
         self.is_too_deep = False
         self.call_stack = []
+        self.parse_tree = None
         
         if self.detect_left_recursion():
             self.add_parsing_step("reject", "LEFT RECURSION ERROR: Grammar contains left recursion - backtracking will loop forever trying the same productions")
             return self.parsing_steps
         
-        parsing_result = self.match_grammar_symbol(self.grammar.start_symbol, 0, 0)
+        # Build the parse tree
+        tree_result = self.match_grammar_symbol(self.grammar.start_symbol, 0, 0)
         
-        if parsing_result is not None and parsing_result == len(self.input_tokens):
-            self.add_parsing_step("accept", "Input accepted!")
+        if tree_result is not None:
+            position, tree_node = tree_result
+            if position == len(self.input_tokens):
+                self.parse_tree = tree_node
+                self.add_parsing_step("accept", "Input accepted!")
+            elif self.step_counter >= self.maximum_steps or self.is_too_deep:
+                self.add_parsing_step("reject", "RECURSION DEPTH ERROR: Exceeded step limit - likely caused by left recursion or deep grammar nesting")
+            else:
+                self.add_parsing_step("reject", "Input rejected - no valid parse found")
         elif self.step_counter >= self.maximum_steps or self.is_too_deep:
             self.add_parsing_step("reject", "RECURSION DEPTH ERROR: Exceeded step limit - likely caused by left recursion or deep grammar nesting")
         else:
@@ -78,7 +88,9 @@ class BacktrackingParser:
         if position < len(self.input_tokens) and self.input_tokens[position] == terminal:
             step_description = "Matched '" + terminal + "' at position " + str(position)
             self.add_parsing_step("match", step_description)
-            return position + 1
+            # Create leaf node for terminal
+            leaf_node = TreeNode(terminal)
+            return (position + 1, leaf_node)
         else:
             if position < len(self.input_tokens):
                 got_token = self.input_tokens[position]
@@ -98,7 +110,10 @@ class BacktrackingParser:
             production_result = self.try_single_production(production, position, recursion_depth + 1)
             
             if production_result is not None:
-                return production_result
+                # Success - create node for this non-terminal
+                position_result, children_nodes = production_result
+                parent_node = TreeNode(symbol, children_nodes)
+                return (position_result, parent_node)
             
             if self.is_too_deep:
                 return None
@@ -111,19 +126,23 @@ class BacktrackingParser:
     
     def try_single_production(self, production, position, recursion_depth):
         current_position = position
+        children_nodes = []
         
         if len(production.right_side) == 0:
             step_description = "Matched epsilon: " + str(production)
             self.add_parsing_step("match", step_description)
-            return position
+            # Create epsilon node
+            epsilon_node = TreeNode("ε")
+            return (position, [epsilon_node])
         
         for symbol in production.right_side:
             symbol_result = self.match_grammar_symbol(symbol, current_position, recursion_depth)
             if symbol_result is None:
                 return None
-            current_position = symbol_result
+            current_position, child_node = symbol_result
+            children_nodes.append(child_node)
         
-        return current_position
+        return (current_position, children_nodes)
     
     def add_parsing_step(self, action_type, description_text):
         self.step_counter = add_parsing_step_to_list(self.parsing_steps, self.step_counter, action_type, description_text)

@@ -1,21 +1,8 @@
 import tkinter as tk
-from tkinter import scrolledtext
+from tkinter import scrolledtext, Canvas, font
 from parsing_core import parse_grammar_text
 from backtracking_parser import BacktrackingParser
 from operator_precedence_parser import OperatorPrecedenceParser
-
-
-step_colors = {
-    "try": "blue",
-    "match": "green",
-    "fail": "red",
-    "backtrack": "orange",
-    "shift": "blue",
-    "reduce": "purple",
-    "accept": "green",
-    "reject": "red",
-    "infinite": "red"
-}
 
 
 class ParserGUI:
@@ -24,11 +11,15 @@ class ParserGUI:
     def __init__(self, main_window):
         self.main_window = main_window
         self.main_window.title("Parsing Visualizer")
-        self.main_window.geometry("800x600")
+        self.main_window.geometry("1200x800")
         
         self.current_grammar = None
         self.parsing_steps = []
         self.current_step_index = 0
+        self.current_parser_type = None  # 'backtracking' or 'op_precedence'
+        self.parse_tree_nodes = []  # Store nodes for parse tree visualization
+        self.parse_tree_root = None  # Root of the complete parse tree
+        self.partial_tree_stack = []  # Stack to track partial tree construction
         
         self.setup_gui_widgets()
         self.load_example_grammar()
@@ -73,11 +64,59 @@ class ParserGUI:
         self.current_step_label = tk.Label(self.main_window, text="", font=("Arial", 11, "bold"))
         self.current_step_label.pack(pady=5)
         
-        steps_label = tk.Label(self.main_window, text="Steps:")
-        steps_label.pack(anchor="w", padx=10)
+        # Visualization area - will show either parse tree or table
+        viz_label = tk.Label(self.main_window, text="Visualization:")
+        viz_label.pack(anchor="w", padx=10)
         
-        self.steps_history_box = tk.Listbox(self.main_window, height=12, width=80, font=("Courier", 9))
-        self.steps_history_box.pack(padx=10, pady=5, fill="both", expand=True)
+        # Container frame for visualizations with white background
+        self.viz_container = tk.Frame(self.main_window, bg="white", relief="solid", borderwidth=1)
+        self.viz_container.pack(padx=10, pady=5, fill="both", expand=True)
+        
+        # Parse tree canvas with scrollbars (for backtracking parser)
+        self.tree_scroll_frame = tk.Frame(self.viz_container, bg="white")
+        
+        self.tree_v_scrollbar = tk.Scrollbar(self.tree_scroll_frame, orient="vertical")
+        self.tree_h_scrollbar = tk.Scrollbar(self.tree_scroll_frame, orient="horizontal")
+        
+        self.parse_tree_canvas = Canvas(
+            self.tree_scroll_frame, 
+            bg="white", 
+            highlightthickness=0,
+            yscrollcommand=self.tree_v_scrollbar.set,
+            xscrollcommand=self.tree_h_scrollbar.set
+        )
+        
+        self.tree_v_scrollbar.config(command=self.parse_tree_canvas.yview)
+        self.tree_h_scrollbar.config(command=self.parse_tree_canvas.xview)
+        
+        self.parse_tree_canvas.grid(row=0, column=0, sticky="nsew")
+        self.tree_v_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.tree_h_scrollbar.grid(row=1, column=0, sticky="ew")
+        
+        self.tree_scroll_frame.grid_rowconfigure(0, weight=1)
+        self.tree_scroll_frame.grid_columnconfigure(0, weight=1)
+        
+        self.tree_scroll_frame.pack_forget()  # Hide initially
+        
+        # Table container with scrollbar (for operator precedence parser)
+        self.table_container = tk.Frame(self.viz_container, bg="white")
+        self.table_scrollbar = tk.Scrollbar(self.table_container)
+        self.table_scrollbar.pack(side="right", fill="y")
+        
+        self.table_canvas = Canvas(self.table_container, bg="white", highlightthickness=0, 
+                                   yscrollcommand=self.table_scrollbar.set)
+        self.table_canvas.pack(side="left", fill="both", expand=True)
+        self.table_scrollbar.config(command=self.table_canvas.yview)
+        
+        self.table_frame = tk.Frame(self.table_canvas, bg="white")
+        self.table_canvas_window = self.table_canvas.create_window((0, 0), window=self.table_frame, anchor="n")
+        
+        self.table_container.pack_forget()  # Hide initially
+        
+        # Bind canvas resize
+        self.table_canvas.bind('<Configure>', self.on_table_canvas_configure)
+        
+
         
         self.final_result_label = tk.Label(self.main_window, text="", font=("Arial", 12, "bold"))
         self.final_result_label.pack(pady=5)
@@ -110,40 +149,64 @@ class ParserGUI:
         error_message = str(error) if str(error) != "" else default_message
         self.current_step_label.config(text="Error: " + error_message, fg="red")
     
+    def _handle_error_step(self, step_description):
+        """Handle error steps by extracting and displaying error type and details"""
+        for error_type in self.ERROR_TYPES:
+            if error_type in step_description:
+                self.current_step_label.config(text=error_type, fg="red")
+                break
+        
+        error_detail = step_description.split(": ", 1)[1] if ": " in step_description else step_description
+        self.final_result_label.config(text=error_detail, fg="red")
+    
+    def _extract_precedence_relation(self, description):
+        """Extract precedence relation symbol from description"""
+        if " < " in description or " ⋖ " in description:
+            return "⋖"
+        elif " > " in description or " ⋗ " in description:
+            return "⋗"
+        elif " = " in description or " ≐ " in description:
+            return "≐"
+        return ""
+    
+    def _check_for_parser_errors(self, parsing_steps):
+        """Check if first step contains an error and handle it"""
+        if len(parsing_steps) == 0:
+            return False
+        
+        error_msg = parsing_steps[0].description
+        for error_type in self.ERROR_TYPES:
+            if error_type in error_msg:
+                self.current_step_label.config(text=error_type, fg="red")
+                error_detail = error_msg.split(": ", 1)[1] if ": " in error_msg else error_msg
+                self.final_result_label.config(text=error_detail, fg="red")
+                self.next_step_button.config(state="disabled")
+                self.reset_button.config(state="normal")
+                return True
+        return False
+    
     def start_backtracking_parser(self):
         if not self.check_if_ready_to_parse():
             return
         
         self.reset_parsing()
+        self.current_parser_type = 'backtracking'
         
         try:
             backtracking_parser = BacktrackingParser(self.current_grammar)
             input_string = self.input_text_box.get()
             self.parsing_steps = backtracking_parser.parse_input(input_string)
+            self.parse_tree_root = backtracking_parser.parse_tree  # Store the final tree
             
             if len(self.parsing_steps) == 0:
                 self.current_step_label.config(text="No steps generated", fg="orange")
                 return
             
-            if len(self.parsing_steps) > 0:
-                error_msg = self.parsing_steps[0].description
-                if "LEFT RECURSION ERROR" in error_msg:
-                    self.current_step_label.config(text="LEFT RECURSION ERROR", fg="red")
-                    error_detail = error_msg.split(": ", 1)[1]
-                    self.final_result_label.config(text=error_detail, fg="red")
-                    self.next_step_button.config(state="disabled")
-                    self.reset_button.config(state="normal")
-                    return
-                elif "RECURSION DEPTH ERROR" in error_msg:
-                    self.current_step_label.config(text="RECURSION DEPTH ERROR", fg="red")
-                    error_detail = error_msg.split(": ", 1)[1]
-                    self.final_result_label.config(text=error_detail, fg="red")
-                    self.next_step_button.config(state="disabled")
-                    self.reset_button.config(state="normal")
-                    return
+            if self._check_for_parser_errors(self.parsing_steps):
+                return
             
             self.enable_step_controls()
-            self.current_step_label.config(text="Backtracking Parser - Ready", fg="black")
+            self.current_step_label.config(text="Backtracking Parser - Ready (Press Next Step to begin)", fg="black")
         except Exception as error:
             self.handle_parsing_error(error, "Parsing failed")
     
@@ -152,6 +215,7 @@ class ParserGUI:
             return
         
         self.reset_parsing()
+        self.current_parser_type = 'op_precedence'
         
         try:
             op_precedence_parser = OperatorPrecedenceParser(self.current_grammar)
@@ -162,32 +226,11 @@ class ParserGUI:
                 self.current_step_label.config(text="No steps generated", fg="orange")
                 return
             
-            if len(self.parsing_steps) > 0:
-                error_msg = self.parsing_steps[0].description
-                if "PRECEDENCE CONFLICT ERROR" in error_msg:
-                    self.current_step_label.config(text="PRECEDENCE CONFLICT ERROR", fg="red")
-                    error_detail = error_msg.split(": ", 1)[1]
-                    self.final_result_label.config(text=error_detail, fg="red")
-                    self.next_step_button.config(state="disabled")
-                    self.reset_button.config(state="normal")
-                    return
-                elif "CYCLIC PRECEDENCE ERROR" in error_msg:
-                    self.current_step_label.config(text="CYCLIC PRECEDENCE ERROR", fg="red")
-                    error_detail = error_msg.split(": ", 1)[1]
-                    self.final_result_label.config(text=error_detail, fg="red")
-                    self.next_step_button.config(state="disabled")
-                    self.reset_button.config(state="normal")
-                    return
-                elif "PARSING STEPS ERROR" in error_msg:
-                    self.current_step_label.config(text="PARSING STEPS ERROR", fg="red")
-                    error_detail = error_msg.split(": ", 1)[1]
-                    self.final_result_label.config(text=error_detail, fg="red")
-                    self.next_step_button.config(state="disabled")
-                    self.reset_button.config(state="normal")
-                    return
+            if self._check_for_parser_errors(self.parsing_steps):
+                return
             
             self.enable_step_controls()
-            self.current_step_label.config(text="Operator Precedence Parser - Ready", fg="black")
+            self.current_step_label.config(text="Operator Precedence Parser - Ready (Press Next Step to begin)", fg="black")
         except Exception as error:
             error_message = str(error) if str(error) != "" else "Parsing failed"
             
@@ -222,6 +265,17 @@ class ParserGUI:
         if self.current_step_index >= len(self.parsing_steps):
             return
         
+        # Show appropriate visualizer on first step
+        if self.current_step_index == 0:
+            if self.current_parser_type == 'backtracking':
+                self.tree_scroll_frame.pack(fill="both", expand=True)
+                self.table_container.pack_forget()
+                self.partial_tree_stack = []  # Reset tree stack
+            elif self.current_parser_type == 'op_precedence':
+                self.table_container.pack(fill="both", expand=True)
+                self.tree_scroll_frame.pack_forget()
+                self.initialize_op_table()
+        
         current_step = self.parsing_steps[self.current_step_index]
         self.current_step_index = self.current_step_index + 1
         
@@ -234,50 +288,421 @@ class ParserGUI:
         is_error = any(error_type in step_description for error_type in self.ERROR_TYPES)
         
         if is_error:
-            for error_type in self.ERROR_TYPES:
-                if error_type in step_description:
-                    self.current_step_label.config(text=error_type, fg="red")
-                    break
-            
-            error_detail = step_description.split(": ", 1)[1] if ": " in step_description else step_description
-            self.final_result_label.config(text=error_detail, fg="red")
+            self._handle_error_step(step_description)
         else:
             self.current_step_label.config(text=step_label_text)
         
-        history_text = step_number + ". [" + current_step.action + "] " + step_description
-        self.steps_history_box.insert("end", history_text)
-        
-        if any(error_type in step_description for error_type in self.ERROR_TYPES):
-            step_color = "red"
-        elif current_step.action in step_colors:
-            step_color = step_colors[current_step.action]
-        else:
-            step_color = "black"
-        
-        self.steps_history_box.itemconfig("end", fg=step_color)
-        self.steps_history_box.see("end")
+        # Update visualization
+        if self.current_parser_type == 'backtracking':
+            self.update_parse_tree(current_step)
+        elif self.current_parser_type == 'op_precedence':
+            self.update_op_table(current_step)
         
         if current_step.action == "accept":
             self.final_result_label.config(text="ACCEPTED", fg="green")
             self.next_step_button.config(state="disabled")
         elif current_step.action == "reject":
-            error_types = ["LEFT RECURSION ERROR", "RECURSION DEPTH ERROR", "PRECEDENCE CONFLICT ERROR", "CYCLIC PRECEDENCE ERROR", "PARSING STEPS ERROR"]
-            if not any(error_type in step_description for error_type in error_types):
+            if not any(error_type in step_description for error_type in self.ERROR_TYPES):
                 self.final_result_label.config(text="REJECTED", fg="red")
             self.next_step_button.config(state="disabled")
     
     def reset_parsing(self):
         self.parsing_steps = []
         self.current_step_index = 0
-        self.steps_history_box.delete(0, "end")
         self.current_step_label.config(text="")
         self.final_result_label.config(text="")
         self.next_step_button.config(state="disabled")
         self.reset_button.config(state="disabled")
+        self.parse_tree_nodes = []
+        self.partial_tree_stack = []
+        self.parse_tree_canvas.delete("all")
+        self.tree_scroll_frame.pack_forget()
+        # Clear table
+        for widget in self.table_frame.winfo_children():
+            widget.destroy()
+        self.table_container.pack_forget()
     
     def enable_step_controls(self):
         self.next_step_button.config(state="normal")
         self.reset_button.config(state="normal")
+    
+    def on_table_canvas_configure(self, event):
+        """Handle canvas resize to center content"""
+        self.table_canvas.configure(scrollregion=self.table_canvas.bbox("all"))
+        # Center the frame
+        canvas_width = event.width
+        frame_width = self.table_frame.winfo_reqwidth()
+        x_position = max(0, (canvas_width - frame_width) // 2)
+        self.table_canvas.coords(self.table_canvas_window, x_position, 0)
+    
+    def update_parse_tree(self, step):
+        """Update parse tree visualization step-by-step"""
+        # For now, only show the final tree when parsing completes
+        # Building a correct incremental tree from step descriptions is complex
+        # because we need to track the exact parser state
+        
+        if step.action == "accept" and self.parse_tree_root is not None:
+            # Show the final complete tree
+            self.draw_complete_tree(self.parse_tree_root)
+        else:
+            # Show a simple progress indicator
+            self.show_parsing_progress(step)
+    
+    def draw_incremental_tree(self):
+        """Draw the tree as it's being built"""
+        self.parse_tree_canvas.delete("all")
+        
+        if len(self.partial_tree_stack) == 0:
+            return
+        
+        # Get the root (first item in stack)
+        root = self.partial_tree_stack[0]['node']
+        
+        # Calculate positions
+        self.node_radius = 30
+        self.vertical_spacing = 80
+        self.horizontal_spacing = 70
+        
+        # Assign positions
+        self._next_x = self.horizontal_spacing
+        self._assign_positions_incremental(root, 0)
+        
+        # Center the tree
+        self._center_tree(root)
+        
+        # Draw the tree
+        self._draw_node_recursive(root)
+        
+        # Update scroll region
+        bbox = self.parse_tree_canvas.bbox("all")
+        if bbox:
+            self.parse_tree_canvas.configure(scrollregion=bbox)
+    
+    def show_parsing_progress(self, step):
+        """Show parsing progress before tree is complete"""
+        self.parse_tree_canvas.delete("all")
+        
+        # Show current step info
+        canvas_width = self.parse_tree_canvas.winfo_width()
+        canvas_height = self.parse_tree_canvas.winfo_height()
+        if canvas_width <= 1:
+            canvas_width = 760
+        if canvas_height <= 1:
+            canvas_height = 300
+        
+        center_x = canvas_width / 2
+        center_y = canvas_height / 2
+        
+        # Show step action
+        action_text = step.action.upper()
+        color_map = {
+            "try": "#4A90E2",
+            "match": "#7ED321",
+            "fail": "#F5A623",
+            "backtrack": "#BD10E0"
+        }
+        color = color_map.get(step.action, "#9B9B9B")
+        
+        self.parse_tree_canvas.create_text(
+            center_x, center_y - 30,
+            text=f"Step {step.number}: {action_text}",
+            font=("Arial", 14, "bold"),
+            fill=color
+        )
+        
+        # Show description
+        desc = step.description
+        if len(desc) > 60:
+            desc = desc[:57] + "..."
+        
+        self.parse_tree_canvas.create_text(
+            center_x, center_y + 10,
+            text=desc,
+            font=("Arial", 10),
+            fill="#333333"
+        )
+        
+        self.parse_tree_canvas.create_text(
+            center_x, center_y + 40,
+            text="(Tree will appear when parsing completes)",
+            font=("Arial", 9, "italic"),
+            fill="#999999"
+        )
+    
+    def draw_complete_tree(self, root):
+        """Draw the complete parse tree"""
+        self.parse_tree_canvas.delete("all")
+        
+        if root is None:
+            return
+        
+        # Calculate tree layout
+        self.node_radius = 30
+        self.vertical_spacing = 80
+        self.horizontal_spacing = 70
+        
+        # Assign positions
+        self._next_x = self.horizontal_spacing
+        self._assign_positions_complete(root, 0)
+        
+        # Center the tree
+        self._center_tree(root)
+        
+        # Draw the tree
+        self._draw_node_recursive(root)
+        
+        # Update scroll region
+        bbox = self.parse_tree_canvas.bbox("all")
+        if bbox:
+            self.parse_tree_canvas.configure(scrollregion=bbox)
+    
+    def _assign_positions_complete(self, node, depth):
+        """Assign positions to nodes recursively"""
+        if node is None:
+            return 0
+        
+        node.y = 50 + depth * self.vertical_spacing
+        
+        if node.is_leaf():
+            node.x = self._next_x
+            self._next_x += self.horizontal_spacing
+            return node.x
+        else:
+            child_positions = []
+            for child in node.children:
+                child_x = self._assign_positions_complete(child, depth + 1)
+                child_positions.append(child_x)
+            
+            if child_positions:
+                node.x = (child_positions[0] + child_positions[-1]) / 2
+            else:
+                node.x = self._next_x
+                self._next_x += self.horizontal_spacing
+            
+            return node.x
+    
+    def _center_tree(self, root):
+        """Center the tree in the canvas"""
+        def find_bounds(node):
+            if node is None:
+                return (float('inf'), float('-inf'))
+            min_x, max_x = node.x, node.x
+            for child in node.children:
+                child_min, child_max = find_bounds(child)
+                min_x = min(min_x, child_min)
+                max_x = max(max_x, child_max)
+            return (min_x, max_x)
+        
+        min_x, max_x = find_bounds(root)
+        tree_width = max_x - min_x
+        
+        canvas_width = self.parse_tree_canvas.winfo_width()
+        if canvas_width <= 1:
+            canvas_width = 760
+        
+        offset = max(0, (canvas_width - tree_width) / 2 - min_x)
+        
+        def apply_offset(node):
+            if node is None:
+                return
+            node.x += offset
+            for child in node.children:
+                apply_offset(child)
+        
+        if offset > 0:
+            apply_offset(root)
+    
+    def _draw_node_recursive(self, node, parent_x=None, parent_y=None):
+        """Recursively draw nodes and edges"""
+        if node is None:
+            return
+        
+        # Draw edge to parent
+        if parent_x is not None and parent_y is not None:
+            self.parse_tree_canvas.create_line(
+                parent_x, parent_y + self.node_radius,
+                node.x, node.y - self.node_radius,
+                width=2, fill="#757575", smooth=True
+            )
+        
+        # Determine color
+        if node.is_leaf():
+            color = "#9B9B9B" if node.symbol == "ε" else "#7ED321"
+        else:
+            color = "#4A90E2"
+        
+        # Draw shadow
+        self.parse_tree_canvas.create_oval(
+            node.x - self.node_radius + 3, node.y - self.node_radius + 3,
+            node.x + self.node_radius + 3, node.y + self.node_radius + 3,
+            fill="#E0E0E0", outline=""
+        )
+        
+        # Draw circle
+        self.parse_tree_canvas.create_oval(
+            node.x - self.node_radius, node.y - self.node_radius,
+            node.x + self.node_radius, node.y + self.node_radius,
+            fill=color, outline="#333333", width=2
+        )
+        
+        # Draw label
+        font_size = 11 if len(node.symbol) <= 2 else 9
+        self.parse_tree_canvas.create_text(
+            node.x, node.y, text=node.symbol,
+            font=("Arial", font_size, "bold"),
+            fill="white"
+        )
+        
+        # Draw children
+        for child in node.children:
+            self._draw_node_recursive(child, node.x, node.y)
+    
+    def initialize_op_table(self):
+        """Initialize the operator precedence table with header card"""
+        # Clear existing widgets
+        for widget in self.table_frame.winfo_children():
+            widget.destroy()
+        
+        # Create header card - fixed width
+        header_card = tk.Frame(self.table_frame, bg="#2C3E50", relief="flat", borderwidth=0)
+        header_card.pack(pady=(10, 5), padx=20)
+        
+        # Define column widths (in pixels)
+        col_widths = [60, 200, 180, 100, 220]
+        headers = ["Step", "Stack", "Input", "Relation", "Action"]
+        
+        for i, (header_text, width) in enumerate(zip(headers, col_widths)):
+            frame = tk.Frame(header_card, bg="#2C3E50", width=width, height=40)
+            frame.pack(side="left", padx=2)
+            frame.pack_propagate(False)  # Prevent frame from shrinking
+            
+            label = tk.Label(
+                frame, 
+                text=header_text, 
+                font=("Arial", 11, "bold"),
+                fg="white",
+                bg="#2C3E50",
+                anchor="center"
+            )
+            label.pack(fill="both", expand=True)
+        
+        self.table_canvas.update_idletasks()
+        self.table_canvas.configure(scrollregion=self.table_canvas.bbox("all"))
+    
+    def update_op_table(self, step):
+        """Update operator precedence table with new step card"""
+        description = step.description
+        action = step.action.upper()
+        
+        # Parse the description to extract stack, input, relation
+        stack = ""
+        input_str = ""
+        relation = ""
+        action_text = action
+        
+        if "stack=" in description:
+            # Extract stack - find between "stack=" and ", input="
+            stack_start = description.find("stack=")
+            if ", input=" in description:
+                stack_end = description.find(", input=")
+                stack = description[stack_start + 6:stack_end].strip()
+            else:
+                # No input in description, take rest of string
+                stack = description[stack_start + 6:].strip()
+        
+        if "input=" in description:
+            # Extract input - everything after "input="
+            input_start = description.find("input=")
+            input_str = description[input_start + 6:].strip()
+        
+        # Extract relation symbols
+        relation = self._extract_precedence_relation(description)
+        
+        # For shift/reduce, extract more specific action
+        if action == "SHIFT":
+            if "Shift '" in description:
+                parts = description.split("'")
+                if len(parts) >= 2:
+                    action_text = "SHIFT " + parts[1]
+            else:
+                action_text = "SHIFT"
+        elif action == "REDUCE":
+            if "Reduce " in description:
+                reduce_part = description.split("Reduce ")[1]
+                if ", stack=" in reduce_part:
+                    reduce_part = reduce_part.split(", stack=")[0]
+                action_text = "REDUCE " + reduce_part
+        elif action == "ACCEPT":
+            action_text = "ACCEPT"
+            relation = "≐"
+        
+        # Determine card color based on action
+        if action == "SHIFT":
+            card_bg = "#E3F2FD"  # Light blue
+            text_color = "#1565C0"
+        elif action == "REDUCE":
+            card_bg = "#F3E5F5"  # Light purple
+            text_color = "#6A1B9A"
+        elif action == "ACCEPT":
+            card_bg = "#E8F5E9"  # Light green
+            text_color = "#2E7D32"
+        elif action == "REJECT":
+            card_bg = "#FFEBEE"  # Light red
+            text_color = "#C62828"
+        else:
+            card_bg = "#F5F5F5"  # Light gray
+            text_color = "#424242"
+        
+        # Create step card with fixed column widths
+        step_card = tk.Frame(self.table_frame, bg=card_bg, relief="raised", borderwidth=1)
+        step_card.pack(pady=2, padx=20, fill="x")
+        
+        # Add hover effect
+        def on_enter(e):
+            step_card.config(relief="solid", borderwidth=2)
+        
+        def on_leave(e):
+            step_card.config(relief="raised", borderwidth=1)
+        
+        step_card.bind("<Enter>", on_enter)
+        step_card.bind("<Leave>", on_leave)
+        
+        # Define column widths (must match header)
+        col_widths = [60, 200, 180, 100, 220]
+        columns = [
+            str(step.number),
+            stack,
+            input_str,
+            relation,
+            action_text
+        ]
+        
+        for i, (col_text, width) in enumerate(zip(columns, col_widths)):
+            # Create fixed-width frame for each column
+            col_frame = tk.Frame(step_card, bg=card_bg, width=width, height=35)
+            col_frame.pack(side="left", padx=2)
+            col_frame.pack_propagate(False)  # Prevent frame from shrinking
+            
+            # Truncate text if too long
+            display_text = col_text
+            max_chars = width // 8  # Approximate characters that fit
+            if len(col_text) > max_chars:
+                display_text = col_text[:max_chars - 3] + "..."
+            
+            label = tk.Label(
+                col_frame,
+                text=display_text,
+                font=("Courier", 9),
+                fg=text_color,
+                bg=card_bg,
+                anchor="center"
+            )
+            label.pack(fill="both", expand=True)
+        
+        # Update scroll region
+        self.table_frame.update_idletasks()
+        self.table_canvas.configure(scrollregion=self.table_canvas.bbox("all"))
+        self.table_canvas.yview_moveto(1.0)  # Scroll to bottom
     
     def load_example_grammar(self):
         example_grammar_text = """S -> a A b

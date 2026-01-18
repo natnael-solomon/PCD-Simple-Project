@@ -48,7 +48,7 @@ class OperatorPrecedenceParser:
             elif parsing_action == "shift":
                 input_position = self.perform_shift_action(parsing_stack, input_tokens, input_position)
             elif parsing_action == "reduce":
-                self.perform_reduce_action(parsing_stack)
+                self.perform_reduce_action(parsing_stack, input_tokens, input_position)
             
             if self.step_counter > self.maximum_steps:
                 self.add_parsing_step("reject", "PARSING STEPS ERROR: Exceeded parsing steps - likely caused by reduce-reduce conflicts or malformed precedence table")
@@ -98,7 +98,7 @@ class OperatorPrecedenceParser:
             stack_top = parsing_stack[1]
             if is_nonterminal_symbol(stack_top, self.grammar):
                 if input_position >= len(input_tokens) - 1:
-                    return self.try_unit_reduction(parsing_stack)
+                    return self.try_unit_reduction(parsing_stack, input_tokens, input_position)
         return False
     
     def determine_parsing_action(self, parsing_stack, input_tokens, input_position):
@@ -125,12 +125,16 @@ class OperatorPrecedenceParser:
         precedence_relation = self.get_precedence_relation(top_terminal, current_input)
         
         parsing_stack.append(current_input)
-        step_message = "Shift '" + current_input + "' (" + top_terminal + " " + precedence_relation + " " + current_input + "), stack=" + str(parsing_stack)
+        
+        # Get remaining input
+        remaining_input = input_tokens[input_position + 1:]
+        
+        step_message = "Shift '" + current_input + "' (" + top_terminal + " " + precedence_relation + " " + current_input + "), stack=" + str(parsing_stack) + ", input=" + str(remaining_input)
         self.add_parsing_step("shift", step_message)
         
         return input_position + 1
     
-    def perform_reduce_action(self, parsing_stack):
+    def perform_reduce_action(self, parsing_stack, input_tokens, input_position):
         handle_start_position = self.find_handle_start_position(parsing_stack)
         
         if handle_start_position is None:
@@ -145,51 +149,60 @@ class OperatorPrecedenceParser:
             self.add_parsing_step("reject", error_message)
             return
         
-        self.replace_handle_with_nonterminal(parsing_stack, handle_symbols, matching_production)
+        self.replace_handle_with_nonterminal(parsing_stack, handle_symbols, matching_production, input_tokens, input_position)
     
     def extract_handle_from_stack(self, parsing_stack, handle_start_position):
         return parsing_stack[handle_start_position:]
     
-    def replace_handle_with_nonterminal(self, parsing_stack, handle_symbols, matching_production):
+    def replace_handle_with_nonterminal(self, parsing_stack, handle_symbols, matching_production, input_tokens, input_position):
         for _ in range(len(handle_symbols)):
             parsing_stack.pop()
         
         parsing_stack.append(matching_production.left_side)
         
+        # Get remaining input
+        remaining_input = input_tokens[input_position:]
+        
         handle_string = " ".join(handle_symbols)
-        step_message = "Reduce " + handle_string + " -> " + matching_production.left_side + ", stack=" + str(parsing_stack)
+        step_message = "Reduce " + handle_string + " -> " + matching_production.left_side + ", stack=" + str(parsing_stack) + ", input=" + str(remaining_input)
         self.add_parsing_step("reduce", step_message)
     
-    def try_unit_reduction(self, parsing_stack):
+    def try_unit_reduction(self, parsing_stack, input_tokens, input_position):
         current_symbol = parsing_stack[1]
+        
+        # Get remaining input
+        remaining_input = input_tokens[input_position:]
         
         for production in self.grammar.production_list:
             if len(production.right_side) == 1 and production.right_side[0] == current_symbol:
                 parsing_stack[1] = production.left_side
-                step_message = "Reduce " + current_symbol + " -> " + production.left_side + " (unit), stack=" + str(parsing_stack)
+                step_message = "Reduce " + current_symbol + " -> " + production.left_side + " (unit), stack=" + str(parsing_stack) + ", input=" + str(remaining_input)
                 self.add_parsing_step("reduce", step_message)
                 return True
         
         return False
     
-    def get_top_terminal_from_stack(self, parsing_stack):
-        stack_index = len(parsing_stack) - 1
+    def _find_terminal_in_stack(self, parsing_stack, start_index=None):
+        """Helper to find terminal symbol in stack from given position"""
+        if start_index is None:
+            start_index = len(parsing_stack) - 1
+        
+        stack_index = start_index
         while stack_index >= 0:
             current_symbol = parsing_stack[stack_index]
             if is_terminal_symbol(current_symbol, self.grammar) or current_symbol == "$":
-                return current_symbol
+                return stack_index
             stack_index = stack_index - 1
+        return None
+    
+    def get_top_terminal_from_stack(self, parsing_stack):
+        terminal_index = self._find_terminal_in_stack(parsing_stack)
+        if terminal_index is not None:
+            return parsing_stack[terminal_index]
         return "$"
     
     def find_handle_start_position(self, parsing_stack):
-        top_terminal_position = None
-        stack_index = len(parsing_stack) - 1
-        while stack_index >= 0:
-            current_symbol = parsing_stack[stack_index]
-            if is_terminal_symbol(current_symbol, self.grammar) or current_symbol == "$":
-                top_terminal_position = stack_index
-                break
-            stack_index = stack_index - 1
+        top_terminal_position = self._find_terminal_in_stack(parsing_stack)
         
         if top_terminal_position is None:
             return None

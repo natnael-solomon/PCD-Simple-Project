@@ -102,24 +102,35 @@ def add_direct_leading_terminals(grammar, leading_sets):
                         leading_sets[production.left_side].append(second_symbol)
 
 
-def propagate_leading_sets(grammar, leading_sets):
+def _propagate_sets(grammar, sets_dict, get_symbol_func):
+    """Generic propagation function for leading/trailing sets
+    
+    Args:
+        grammar: The grammar object
+        sets_dict: Dictionary of sets to propagate
+        get_symbol_func: Function that takes production.right_side and returns the symbol to check
+    """
     something_changed = True
     while something_changed:
         something_changed = False
         
         for production in grammar.production_list:
             if len(production.right_side) > 0:
-                first_symbol = production.right_side[0]
-                if is_nonterminal_symbol(first_symbol, grammar):
-                    old_count = len(leading_sets[production.left_side])
+                symbol = get_symbol_func(production.right_side)
+                if is_nonterminal_symbol(symbol, grammar):
+                    old_count = len(sets_dict[production.left_side])
                     
-                    for terminal in leading_sets[first_symbol]:
-                        if terminal not in leading_sets[production.left_side]:
-                            leading_sets[production.left_side].append(terminal)
+                    for terminal in sets_dict[symbol]:
+                        if terminal not in sets_dict[production.left_side]:
+                            sets_dict[production.left_side].append(terminal)
                     
-                    new_count = len(leading_sets[production.left_side])
+                    new_count = len(sets_dict[production.left_side])
                     if new_count > old_count:
                         something_changed = True
+
+
+def propagate_leading_sets(grammar, leading_sets):
+    _propagate_sets(grammar, leading_sets, lambda right_side: right_side[0])
 
 
 def compute_trailing_sets(grammar):
@@ -153,23 +164,7 @@ def add_direct_trailing_terminals(grammar, trailing_sets):
 
 
 def propagate_trailing_sets(grammar, trailing_sets):
-    something_changed = True
-    while something_changed:
-        something_changed = False
-        
-        for production in grammar.production_list:
-            if len(production.right_side) > 0:
-                last_symbol = production.right_side[-1]
-                if is_nonterminal_symbol(last_symbol, grammar):
-                    old_count = len(trailing_sets[production.left_side])
-                    
-                    for terminal in trailing_sets[last_symbol]:
-                        if terminal not in trailing_sets[production.left_side]:
-                            trailing_sets[production.left_side].append(terminal)
-                    
-                    new_count = len(trailing_sets[production.left_side])
-                    if new_count > old_count:
-                        something_changed = True
+    _propagate_sets(grammar, trailing_sets, lambda right_side: right_side[-1])
 
 
 def set_precedence_relation(symbol_a, symbol_b, relation_type, precedence_relations):

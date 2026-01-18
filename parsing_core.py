@@ -10,6 +10,21 @@ class Production:
             return self.left_side + " -> ε"
 
 
+class TreeNode:
+    """Node for parse tree visualization"""
+    def __init__(self, symbol, children=None):
+        self.symbol = symbol
+        self.children = children if children is not None else []
+        self.x = 0
+        self.y = 0
+    
+    def add_child(self, child):
+        self.children.append(child)
+    
+    def is_leaf(self):
+        return len(self.children) == 0
+
+
 class Grammar:
     def __init__(self):
         self.production_list = []
